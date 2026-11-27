@@ -80,4 +80,41 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  startKeepAlive();
 });
+
+// ---------------------------------------------------------------------------
+// Self-ping keep-alive (every 3 minutes) — prevents Render free tier sleep
+// ---------------------------------------------------------------------------
+const PING_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes
+
+function startKeepAlive() {
+  // Render exposes the public URL via RENDER_EXTERNAL_URL.
+  // You can also set SELF_URL manually in your environment variables.
+  const selfUrl =
+    process.env.SELF_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    `http://localhost:${PORT}`;
+
+  const pingUrl = selfUrl.replace(/\/$/, '') + '/';
+
+  console.log(`[keep-alive] Self-ping active → ${pingUrl} every 3 min`);
+
+  setInterval(() => {
+    const proto = pingUrl.startsWith('https') ? 'node:https' : 'node:http';
+    import(proto)
+      .then(({ default: mod }) => {
+        const req = mod.get(pingUrl, { timeout: 10_000 }, (res) => {
+          console.log(`[keep-alive] ping → ${res.statusCode} OK`);
+          res.resume();
+        });
+        req.on('error', (err) => {
+          console.warn(`[keep-alive] ping failed: ${err.message}`);
+        });
+        req.end();
+      })
+      .catch((err) => {
+        console.warn(`[keep-alive] import failed: ${err.message}`);
+      });
+  }, PING_INTERVAL_MS);
+}
